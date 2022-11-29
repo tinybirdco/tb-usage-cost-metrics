@@ -1,0 +1,136 @@
+DESCRIPTION >
+	For a given date range and resource(s), returns usage and cost metrics (at the list price).
+
+
+NODE cost_variables
+DESCRIPTION >
+    Unit pricing for processed and stored GB.
+
+SQL >
+
+    SELECT
+        0.07 AS price_per_processed_gb,
+        0.34 AS price_per_stored_gb
+
+
+
+NODE processed_ingest
+DESCRIPTION >
+    Returns the **data processed on ingestion** for each Data Source (including MVs).
+
+SQL >
+
+    %
+    SELECT
+        datasource_name AS resource,
+        'datasource' AS resource_type,
+        sum(read_bytes) / pow(10, 9) AS gb_read,
+        sum(written_bytes) / pow(10, 9) AS gb_written
+    FROM tinybird.datasources_ops_log
+    WHERE
+        event_type NOT IN ('populateview', 'populateview-queued')
+        {% if defined(start_date) and defined(end_date) %}
+            AND toDate(timestamp) BETWEEN {{Date(start_date, description="Start date in format YYYY-MM-DD. Defaults to yesterday if not defined.")}}
+            AND {{Date(end_date, description="End date in format YYYY-MM-DD. Defaults to today if not defined.")}}
+        {% else %}
+            AND toDate(timestamp) BETWEEN addDays(today(),-1) AND today()
+        {% end %}
+        {% if defined(resources) %}
+            AND resource IN {{Array(resources, 'String', description="Comma-separated resources. Defaults to all if not defined.")}}
+        {% end %}
+    GROUP BY resource, resource_type
+
+
+
+NODE processed_APIs
+DESCRIPTION >
+    Returns the **data processed from API requests** for each Pipe and Query API.
+
+SQL >
+
+    %
+    SELECT
+        pipe_name AS resource,
+        if(resource == 'query_api', 'query_api', 'pipe') AS resource_type,
+        sum(read_bytes_sum) / pow(10, 9) AS gb_read
+    FROM tinybird.pipe_stats
+    WHERE
+        1 = 1
+        {% if defined(start_date) and defined(end_date) %}
+            AND date BETWEEN {{ Date(start_date) }} AND {{ Date(end_date) }}
+        {% else %} AND date BETWEEN addDays(today(), -1) AND today()
+        {% end %}
+        {% if defined(resources) %}
+            AND resource IN {{ Array(resources, "String") }}
+        {% end %}
+    GROUP BY resource, resource_type
+
+
+
+NODE storage
+DESCRIPTION >
+    Returns the **storage for each Data Source** at the end of each period. Note that storage is a point-in-time metric (it is measured at the end of each month, not summed over days).
+
+SQL >
+
+    %
+    SELECT
+       toStartOfMonth(timestamp) as month,
+       datasource_name AS resource,
+       'datasource' AS resource_type,
+       argMax((bytes + bytes_quarantine), timestamp) / pow(10,9) AS gb_stored
+    FROM tinybird.datasources_storage
+    WHERE 1=1
+        {% if defined(start_date) and defined(end_date) %}
+            AND toDate(timestamp) BETWEEN {{Date(start_date)}}
+            AND {{Date(end_date)}}
+        {% else %}
+            AND toDate(timestamp) BETWEEN addDays(today(),-1) AND today()
+        {% end %}
+        {% if defined(resources) %}
+            AND resource IN {{Array(resources, 'String')}}
+        {% end %}
+    GROUP BY month, resource, resource_type
+    ORDER BY resource, month desc
+
+
+
+NODE endpoint
+DESCRIPTION >
+    Returns the total data read, written, and stored for each resource, along with the cost at the list price.
+
+SQL >
+
+    WITH
+        (SELECT price_per_processed_gb FROM cost_variables) AS price_per_processed_gb,
+        (SELECT price_per_stored_gb FROM cost_variables) AS price_per_stored_gb
+    SELECT
+        resource,
+        resource_type,
+        sum(gb_read) AS gb_read,
+        sum(gb_written) AS gb_written,
+        sum(gb_stored) AS gb_stored,
+        round((gb_read + gb_written) * price_per_processed_gb, 4) AS cost_processed,
+        round(gb_stored * price_per_stored_gb, 4) AS cost_stored,
+        round(cost_processed + cost_stored, 4) AS total_cost
+    FROM
+        (
+            SELECT resource, resource_type, gb_read, gb_written, 0 AS gb_stored
+            FROM processed_ingest
+            UNION ALL
+            SELECT resource, resource_type, gb_read, 0 AS gb_written, 0 AS gb_stored
+            FROM processed_APIs
+            UNION ALL
+            SELECT
+                resource,
+                resource_type,
+                0 AS gb_read,
+                0 AS gb_written,
+                sum(gb_stored) AS gb_stored
+            FROM storage
+            GROUP BY resource, resource_type
+        )
+    GROUP BY resource, resource_type
+    ORDER BY total_cost desc
+
+

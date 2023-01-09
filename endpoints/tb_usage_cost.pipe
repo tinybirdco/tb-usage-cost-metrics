@@ -1,6 +1,3 @@
-TOKEN tb_usage_read READ
-
-
 DESCRIPTION >
 	For a given date range and resource(s), returns usage and cost metrics (at the list price).
 
@@ -77,8 +74,6 @@ DESCRIPTION >
 SQL >
 
     %
-    {% set start_date = '2022-12-01'%}
-    {% set end_date = '2023-01-09'%}
     SELECT
         toStartOfMonth(day) AS month,
         resource,

@@ -1,3 +1,6 @@
+TOKEN tb_usage_read READ
+
+
 DESCRIPTION >
 	For a given date range and resource(s), returns usage and cost metrics (at the list price).
 

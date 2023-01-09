@@ -77,8 +77,6 @@ DESCRIPTION >
 SQL >
 
     %
-    {% set start_date = '2022-12-01'%}
-    {% set end_date = '2023-01-09'%}
     SELECT
         toStartOfMonth(day) AS month,
         resource,

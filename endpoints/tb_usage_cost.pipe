@@ -24,24 +24,24 @@ DESCRIPTION >
 SQL >
 
     %
-    SELECT
-        datasource_name AS resource,
-        'datasource' AS resource_type,
-        sum(read_bytes) / pow(10, 9) AS gb_read,
-        sum(written_bytes) / pow(10, 9) AS gb_written
-    FROM tinybird.datasources_ops_log
-    WHERE
-        event_type NOT IN ('populateview', 'populateview-queued')
-        {% if defined(start_date) and defined(end_date) %}
-            AND toDate(timestamp) BETWEEN {{Date(start_date, description="Start date in format YYYY-MM-DD. Defaults to yesterday if not defined.")}}
-            AND {{Date(end_date, description="End date in format YYYY-MM-DD. Defaults to today if not defined.")}}
-        {% else %}
-            AND toDate(timestamp) BETWEEN addDays(today(),-1) AND today()
-        {% end %}
-        {% if defined(resources) %}
-            AND resource IN {{Array(resources, 'String', description="Comma-separated resources. Defaults to all if not defined.")}}
-        {% end %}
-    GROUP BY resource, resource_type
+        SELECT
+            datasource_name AS resource,
+            'datasource' AS resource_type,
+            sum(read_bytes) / pow(10, 9) AS gb_read,
+            sum(written_bytes) / pow(10, 9) AS gb_written
+        FROM tinybird.datasources_ops_log
+        WHERE
+            event_type NOT IN ('populateview', 'populateview-queued')
+            {% if defined(start_date) and defined(end_date) %}
+                AND toDate(timestamp) BETWEEN {{Date(start_date, description="Start date in format YYYY-MM-DD. Defaults to yesterday if not defined.")}}
+                AND {{Date(end_date, description="End date in format YYYY-MM-DD. Defaults to today if not defined.")}}
+            {% else %}
+                AND toDate(timestamp) BETWEEN addDays(today(),-1) AND today()
+            {% end %}
+            {% if defined(resources) %}
+                AND resource IN {{Array(resources, 'String', description="Comma-separated resources. Defaults to all if not defined.")}}
+            {% end %}
+        GROUP BY resource, resource_type
 
 
 
@@ -52,47 +52,59 @@ DESCRIPTION >
 SQL >
 
     %
-    SELECT
-        pipe_name AS resource,
-        if(resource == 'query_api', 'query_api', 'pipe') AS resource_type,
-        sum(read_bytes_sum) / pow(10, 9) AS gb_read
-    FROM tinybird.pipe_stats
-    WHERE
-        1 = 1
-        {% if defined(start_date) and defined(end_date) %}
-            AND date BETWEEN {{ Date(start_date) }} AND {{ Date(end_date) }}
-        {% else %} AND date BETWEEN addDays(today(), -1) AND today()
-        {% end %}
-        {% if defined(resources) %}
-            AND resource IN {{ Array(resources, "String") }}
-        {% end %}
-    GROUP BY resource, resource_type
+        SELECT
+            pipe_name AS resource,
+            if(resource == 'query_api', 'query_api', 'pipe') AS resource_type,
+            sum(read_bytes_sum) / pow(10, 9) AS gb_read
+        FROM tinybird.pipe_stats
+        WHERE
+            1 = 1
+            {% if defined(start_date) and defined(end_date) %}
+                AND date BETWEEN {{ Date(start_date) }} AND {{ Date(end_date) }}
+            {% else %} AND date BETWEEN addDays(today(), -1) AND today()
+            {% end %}
+            {% if defined(resources) %}
+                AND resource IN {{ Array(resources, "String") }}
+            {% end %}
+        GROUP BY resource, resource_type
 
 
 
 NODE storage
 DESCRIPTION >
-    Returns the **storage for each Data Source** at the end of each period. Note that storage is a point-in-time metric (it is measured at the end of each month, not summed over days).
+    Returns the **storage for each Data Source** by month. Note that storage is a point-in-time metric (it is measured at the end of each month, not summed over days).
 
 SQL >
 
     %
+    {% set start_date = '2022-12-01'%}
+    {% set end_date = '2023-01-09'%}
     SELECT
-       toStartOfMonth(timestamp) as month,
-       datasource_name AS resource,
-       'datasource' AS resource_type,
-       argMax((bytes + bytes_quarantine), timestamp) / pow(10,9) AS gb_stored
-    FROM tinybird.datasources_storage
-    WHERE 1=1
-        {% if defined(start_date) and defined(end_date) %}
-            AND toDate(timestamp) BETWEEN {{Date(start_date)}}
-            AND {{Date(end_date)}}
-        {% else %}
-            AND toDate(timestamp) BETWEEN addDays(today(),-1) AND today()
-        {% end %}
-        {% if defined(resources) %}
-            AND resource IN {{Array(resources, 'String')}}
-        {% end %}
+        toStartOfMonth(day) AS month,
+        resource,
+        resource_type,
+        argMax(gb_stored, day) AS gb_stored
+    FROM
+        (
+            SELECT
+                toDate(timestamp) AS day,
+                datasource_name AS resource,
+                'datasource' AS resource_type,
+                (max(bytes) + max(bytes_quarantine)) / pow(10, 9) AS gb_stored
+            FROM tinybird.datasources_storage
+            WHERE
+                1 = 1
+                {% if defined(start_date) and defined(end_date) %}
+                    AND toDate(timestamp) BETWEEN {{ Date(start_date) }}
+                    AND {{ Date(end_date) }}
+                {% else %}
+                    AND toDate(timestamp) BETWEEN addDays(today(), -1) AND today()
+                {% end %}
+                {% if defined(resources) %}
+                    AND resource IN {{ Array(resources, "String") }}
+                {% end %}
+            GROUP BY day, resource, resource_type
+        )
     GROUP BY month, resource, resource_type
     ORDER BY resource, month desc
 
